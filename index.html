@@ -281,7 +281,7 @@
 
   <div class="card" id="sync-card"></div>
 
-  <div class="card">
+  <div class="card" id="paste-card">
     <h2><span class="icon">📋</span> Dán hóa đơn — tự động nhận diện</h2>
     <textarea class="paste-box" id="paste-input"
       placeholder="Copy toàn bộ nội dung hóa đơn (từ web/app KTX) rồi dán vào đây... Web sẽ tự nhận tháng, tiền điện, tiền nước, chỉ số công tơ."></textarea>
@@ -331,8 +331,16 @@ function defaultState() {
     periods,
     activeTab: MONTHS[0],
     bank: { bin: "", acc: "", name: "" }, // tài khoản nhận tiền (VietQR)
+    adminPin: "", // mã quản lý: rỗng = chưa khóa, ai cũng sửa được
     updatedAt: 0
   };
+}
+
+// Chế độ quản lý: máy nào lưu đúng mã thì được sửa, còn lại chỉ xem
+const ADMIN_KEY = "ktx-admin-pin";
+function isAdmin() {
+  if (!state.adminPin) return true; // chưa đặt mã — chế độ mở
+  return localStorage.getItem(ADMIN_KEY) === state.adminPin;
 }
 // Chuẩn hóa dữ liệu bất kỳ (localStorage / đám mây / file nhập) về cấu trúc chuẩn
 function normalize(s) {
@@ -366,6 +374,7 @@ function normalize(s) {
   if (s.bank && typeof s.bank === "object") {
     out.bank = { bin: String(s.bank.bin || ""), acc: String(s.bank.acc || ""), name: String(s.bank.name || "") };
   }
+  if (typeof s.adminPin === "string") out.adminPin = s.adminPin;
   out.activeTab = (MONTHS.includes(s.activeTab) || s.activeTab === "summary") ? s.activeTab : MONTHS[0];
   out.updatedAt = Number(s.updatedAt) || 0;
   return out;
@@ -662,10 +671,16 @@ function renderSyncCard() {
     : syncStatus === "saving" ? "Đang lưu lên đám mây…"
     : syncStatus === "error" ? "⚠ Lỗi kết nối — kiểm tra mạng hoặc URL Firebase"
     : "Đang kết nối…";
+  const lockBtn = !state.adminPin
+    ? '<button class="btn-mini" id="lock-setup" title="Đặt mã để chỉ mình bạn sửa được số liệu">🔑 Đặt mã quản lý</button>'
+    : (isAdmin()
+      ? '<button class="btn-mini" id="lock-off" title="Chuyển máy này về chế độ chỉ xem">🔓 Quản lý</button>'
+      : '<button class="btn-mini" id="lock-on" title="Nhập mã quản lý để được sửa">🔒 Chỉ xem</button>');
   el.innerHTML = `
     <div class="sync-bar">
       <span class="sync-dot ${dotCls}"></span>
       <span class="sync-text">☁️ ${statusText}</span>
+      ${lockBtn}
       <button class="btn-mini" id="sync-toggle">${syncPanelOpen ? "Đóng" : (syncCfg ? "Cài đặt" : "Bật đồng bộ")}</button>
     </div>
     ${syncPanelOpen ? `
@@ -691,6 +706,30 @@ function renderSyncCard() {
       <p class="note">Chưa có Firebase? Vào <b>console.firebase.google.com</b> → Add project → trong project chọn <b>Build → Realtime Database → Create database</b> (chọn Singapore, chế độ <b>test mode</b>) → copy URL dạng <i>https://…firebasedatabase.app</i> dán vào ô trên. Cả phòng chỉ cần 1 người làm 1 lần.</p>
     </div>` : ""}
   `;
+
+  const lockSetup = document.getElementById("lock-setup");
+  if (lockSetup) lockSetup.onclick = () => {
+    const pin = prompt("Đặt mã quản lý (chỉ mình bạn biết — máy nào nhập đúng mã mới sửa được số liệu):");
+    if (!pin || !pin.trim()) return;
+    state.adminPin = pin.trim();
+    localStorage.setItem(ADMIN_KEY, state.adminPin);
+    saveState();
+    render();
+  };
+  const lockOn = document.getElementById("lock-on");
+  if (lockOn) lockOn.onclick = () => {
+    const pin = prompt("Nhập mã quản lý:");
+    if (pin === null) return;
+    if (pin.trim() === state.adminPin) { localStorage.setItem(ADMIN_KEY, state.adminPin); render(); }
+    else alert("Sai mã quản lý.");
+  };
+  const lockOff = document.getElementById("lock-off");
+  if (lockOff) lockOff.onclick = () => {
+    if (confirm("Chuyển máy này về chế độ chỉ xem? (nhập lại mã sẽ sửa được tiếp)")) {
+      localStorage.removeItem(ADMIN_KEY);
+      render();
+    }
+  };
 
   document.getElementById("sync-toggle").onclick = () => { syncPanelOpen = !syncPanelOpen; renderSyncCard(); };
   if (!syncPanelOpen) return;
@@ -756,6 +795,8 @@ function renderMonth(ym) {
   const perDay = sumDays > 0 ? total / sumDays : 0;
 
   const bankReady = state.bank.bin && state.bank.acc;
+  const ADMIN = isAdmin();
+  const dis = ADMIN ? "" : "disabled";
 
   const c = document.getElementById("content");
   c.innerHTML = `
@@ -779,21 +820,21 @@ function renderMonth(ym) {
       <div class="grid cols-4">
         <div>
           <label class="field-label">Ngày bắt đầu</label>
-          <input type="date" id="inp-start" value="${p.start}">
+          <input type="date" id="inp-start" value="${p.start}" ${dis}>
         </div>
         <div>
           <label class="field-label">Ngày kết thúc</label>
-          <input type="date" id="inp-end" value="${p.end}">
+          <input type="date" id="inp-end" value="${p.end}" ${dis}>
         </div>
         <div>
           <label class="field-label">⚡ Tổng tiền điện (₫)</label>
           <input class="money" id="inp-elec" inputmode="numeric"
-                 value="${p.elec ? p.elec.toLocaleString("vi-VN") : ""}" placeholder="0">
+                 value="${p.elec ? p.elec.toLocaleString("vi-VN") : ""}" placeholder="0" ${dis}>
         </div>
         <div>
           <label class="field-label">💧 Tổng tiền nước (₫)</label>
           <input class="money" id="inp-water" inputmode="numeric"
-                 value="${p.water ? p.water.toLocaleString("vi-VN") : ""}" placeholder="0">
+                 value="${p.water ? p.water.toLocaleString("vi-VN") : ""}" placeholder="0" ${dis}>
         </div>
       </div>
       <p class="hint" style="margin-top:10px">
@@ -831,12 +872,15 @@ function renderMonth(ym) {
         </table>
       </div>
       <p class="note">
-        💡 Nhập số ngày mỗi người thực ở trong đợt (mặc định ở đủ ${nDays} ngày — bấm <b>Đủ</b> để đặt lại).
-        Tiền được chia theo tỷ lệ: <b>tiền người A = tổng tiền × ngày A ÷ tổng ngày cả phòng</b>, làm tròn sao cho cộng lại khớp đúng tổng.
-        Đổi tên thành viên sẽ áp dụng từ tháng này trở đi.
+        ${ADMIN
+          ? `💡 Nhập số ngày mỗi người thực ở trong đợt (mặc định ở đủ ${nDays} ngày — bấm <b>Đủ</b> để đặt lại).
+             Tiền được chia theo tỷ lệ: <b>tiền người A = tổng tiền × ngày A ÷ tổng ngày cả phòng</b>, làm tròn sao cho cộng lại khớp đúng tổng.
+             Đổi tên thành viên sẽ áp dụng từ tháng này trở đi.`
+          : `👁 Bạn đang ở chế độ xem — chỉ người quản lý sửa được số liệu. Bấm <b>📱 QR</b> cạnh số tiền của mình để quét mã chuyển khoản.`}
       </p>
     </div>
 
+    ${ADMIN ? `
     <div class="card">
       <h2><span class="icon">💳</span> Tài khoản nhận tiền (VietQR)</h2>
       <div class="grid cols-4">
@@ -860,7 +904,7 @@ function renderMonth(ym) {
         Sau khi điền, cạnh số tiền mỗi người sẽ có nút <b>📱 QR</b>: bấm để hiện mã VietQR
         đã điền sẵn đúng số tiền + nội dung chuyển khoản, quét bằng app ngân hàng bất kỳ.
       </p>
-    </div>
+    </div>` : ""}
   `;
 
   // Bảng thành viên
@@ -870,12 +914,13 @@ function renderMonth(ym) {
     const isFull = (p.days[i] === null || p.days[i] === undefined || p.days[i] === "");
     tr.innerHTML = `
       <td class="person">
-        <input class="name-input" data-person="${i}" value="${escapeHtml(p.names[i])}" title="Sửa tên — áp dụng từ tháng này trở đi">
+        <input class="name-input" data-person="${i}" value="${escapeHtml(p.names[i])}"
+               title="${ADMIN ? "Sửa tên — áp dụng từ tháng này trở đi" : ""}" ${ADMIN ? "" : "readonly"}>
       </td>
       <td style="text-align:right">
         <input class="days-input" data-days="${i}" type="number" min="0" max="${nDays}"
-               value="${daysArr[i]}" ${isFull ? 'style="color:var(--muted)"' : ""}>
-        <button class="btn-mini" data-full="${i}" title="Ở đủ cả đợt">Đủ</button>
+               value="${daysArr[i]}" ${isFull ? 'style="color:var(--muted)"' : ""} ${dis}>
+        ${ADMIN ? `<button class="btn-mini" data-full="${i}" title="Ở đủ cả đợt">Đủ</button>` : ""}
       </td>
       <td><span class="money-val">${fmtMoney(elecSplit[i])}</span></td>
       <td><span class="money-val">${fmtMoney(waterSplit[i])}</span></td>
@@ -885,6 +930,14 @@ function renderMonth(ym) {
   }
 
   // ---- Gắn sự kiện ----
+  tbody.querySelectorAll("[data-qr]").forEach(btn => {
+    btn.onclick = () => {
+      const i = +btn.dataset.qr;
+      showQR(p.names[i], elecSplit[i] + waterSplit[i], ym);
+    };
+  });
+  if (!ADMIN) return; // chế độ xem: chỉ có nút QR hoạt động
+
   document.getElementById("inp-start").onchange = e => { p.start = e.target.value; saveState(); render(); };
   document.getElementById("inp-end").onchange   = e => {
     p.end = e.target.value;
@@ -929,12 +982,6 @@ function renderMonth(ym) {
   });
   tbody.querySelectorAll("[data-full]").forEach(btn => {
     btn.onclick = () => { p.days[+btn.dataset.full] = null; saveState(); render(); };
-  });
-  tbody.querySelectorAll("[data-qr]").forEach(btn => {
-    btn.onclick = () => {
-      const i = +btn.dataset.qr;
-      showQR(p.names[i], elecSplit[i] + waterSplit[i], ym);
-    };
   });
   document.getElementById("bank-bin").onchange = e => { state.bank.bin = e.target.value; saveState(); render(); };
   document.getElementById("bank-acc").addEventListener("change", e => { state.bank.acc = e.target.value.trim(); saveState(); render(); });
@@ -1019,8 +1066,8 @@ function renderSummary() {
       <p class="note">💡 Bấm vào tên tháng để mở trang nhập liệu của tháng đó. Ô “—” là tháng chưa nhập tiền; dấu “·” là người đó không ở phòng tháng đó.</p>
       <p style="margin-top:12px">
         <button class="btn-mini" id="btn-export">⬇ Xuất dữ liệu (JSON)</button>
-        <button class="btn-mini" id="btn-import">⬆ Nhập dữ liệu (JSON)</button>
-        <button class="btn-mini" id="btn-reset" style="color:#dc2626">🗑 Xoá toàn bộ dữ liệu</button>
+        ${isAdmin() ? `<button class="btn-mini" id="btn-import">⬆ Nhập dữ liệu (JSON)</button>
+        <button class="btn-mini" id="btn-reset" style="color:#dc2626">🗑 Xoá toàn bộ dữ liệu</button>` : ""}
       </p>
     </div>
   `;
@@ -1036,6 +1083,8 @@ function renderSummary() {
     a.click();
     URL.revokeObjectURL(a.href);
   };
+  if (!isAdmin()) return; // chế độ xem: dừng ở nút xuất dữ liệu
+
   document.getElementById("btn-import").onclick = () => {
     const inp = document.createElement("input");
     inp.type = "file";
@@ -1066,6 +1115,7 @@ function escapeHtml(s) {
 
 function render() {
   renderSyncCard();
+  document.getElementById("paste-card").style.display = isAdmin() ? "" : "none";
   renderTabs();
   if (state.activeTab === "summary") renderSummary();
   else renderMonth(state.activeTab);
