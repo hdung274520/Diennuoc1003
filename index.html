@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tính tiền điện nước KTX</title>
+<style>
+  :root {
+    --bg: #f1f5f9;
+    --card: #ffffff;
+    --primary: #2563eb;
+    --primary-dark: #1d4ed8;
+    --accent: #0ea5e9;
+    --text: #0f172a;
+    --muted: #64748b;
+    --border: #e2e8f0;
+    --green: #16a34a;
+    --amber: #d97706;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding-bottom: 40px;
+  }
+  header {
+    background: linear-gradient(135deg, #1e3a8a, #2563eb 55%, #0ea5e9);
+    color: #fff;
+    padding: 26px 20px 62px;
+    text-align: center;
+  }
+  header h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: .3px; }
+  header p { margin-top: 6px; opacity: .85; font-size: .9rem; }
+
+  .container { max-width: 980px; margin: -38px auto 0; padding: 0 16px; }
+
+  /* Tabs tháng */
+  .tabs {
+    display: flex; gap: 8px; flex-wrap: wrap;
+    background: var(--card);
+    border-radius: var(--radius);
+    padding: 10px;
+    box-shadow: 0 6px 18px rgba(15, 23, 42, .08);
+    margin-bottom: 18px;
+  }
+  .tab {
+    flex: 1 1 auto;
+    min-width: 86px;
+    border: 1.5px solid var(--border);
+    background: #f8fafc;
+    border-radius: 10px;
+    padding: 9px 6px;
+    font-size: .88rem;
+    font-weight: 600;
+    color: var(--muted);
+    cursor: pointer;
+    text-align: center;
+    transition: all .15s;
+  }
+  .tab:hover { border-color: var(--primary); color: var(--primary); }
+  .tab.active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+    box-shadow: 0 4px 10px rgba(37, 99, 235, .35);
+  }
+  .tab.summary-tab.active { background: var(--green); border-color: var(--green); box-shadow: 0 4px 10px rgba(22,163,74,.35); }
+  .tab .dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--green); margin-left: 5px; vertical-align: middle;
+  }
+
+  .card {
+    background: var(--card);
+    border-radius: var(--radius);
+    box-shadow: 0 6px 18px rgba(15, 23, 42, .08);
+    padding: 20px;
+    margin-bottom: 18px;
+  }
+  .card h2 {
+    font-size: 1.02rem; margin-bottom: 14px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card h2 .icon { font-size: 1.2rem; }
+
+  .grid { display: grid; gap: 14px; }
+  .grid.cols-2 { grid-template-columns: 1fr 1fr; }
+  .grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+  @media (max-width: 720px) {
+    .grid.cols-4 { grid-template-columns: 1fr 1fr; }
+  }
+
+  label.field-label {
+    display: block; font-size: .78rem; font-weight: 600;
+    color: var(--muted); margin-bottom: 5px; text-transform: uppercase; letter-spacing: .4px;
+  }
+  input[type="date"], input.money, input.days-input, input.name-input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    font-size: .95rem;
+    font-family: inherit;
+    color: var(--text);
+    background: #fff;
+    transition: border-color .15s;
+  }
+  input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+  input.money { text-align: right; font-weight: 600; }
+
+  .hint { font-size: .78rem; color: var(--muted); margin-top: 4px; }
+  .badge {
+    display: inline-block; background: #eff6ff; color: var(--primary);
+    border-radius: 999px; padding: 3px 12px; font-size: .8rem; font-weight: 600;
+  }
+  .badge.warn { background: #fffbeb; color: var(--amber); }
+
+  /* Bảng */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+  th, td { padding: 10px 10px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { font-size: .75rem; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+  th:first-child, td:first-child { text-align: left; }
+  tbody tr:hover { background: #f8fafc; }
+  td.person { font-weight: 600; }
+  td .money-val { font-weight: 600; }
+  td .total-val { font-weight: 700; color: var(--primary-dark); }
+  tfoot td { font-weight: 700; border-top: 2px solid var(--text); border-bottom: none; }
+
+  .days-input { width: 74px !important; text-align: center; font-weight: 600; }
+  .btn-mini {
+    border: 1.5px solid var(--border); background: #f8fafc; color: var(--muted);
+    border-radius: 8px; padding: 5px 9px; font-size: .75rem; font-weight: 600; cursor: pointer;
+    margin-left: 6px;
+  }
+  .btn-mini:hover { border-color: var(--primary); color: var(--primary); }
+
+  .name-input { font-weight: 600; }
+
+  /* Thẻ tổng quan */
+  .stat-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 18px; }
+  @media (max-width: 720px) { .stat-cards { grid-template-columns: 1fr; } }
+  .stat {
+    background: var(--card); border-radius: var(--radius);
+    box-shadow: 0 6px 18px rgba(15,23,42,.08);
+    padding: 16px 18px;
+    border-left: 5px solid var(--primary);
+  }
+  .stat.elec { border-left-color: var(--amber); }
+  .stat.water { border-left-color: var(--accent); }
+  .stat.total { border-left-color: var(--green); }
+  .stat .stat-label { font-size: .78rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+  .stat .stat-value { font-size: 1.35rem; font-weight: 700; margin-top: 4px; }
+
+  .note { font-size: .8rem; color: var(--muted); margin-top: 10px; line-height: 1.5; }
+  .footer-note { text-align: center; color: var(--muted); font-size: .78rem; margin-top: 8px; }
+  .highlight-cell { background: #f0fdf4; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚡💧 Tính tiền điện nước KTX</h1>
+  <p>Chia tiền theo số ngày ở thực tế của từng người · Tháng 6 → 12 / 2026</p>
+</header>
+
+<div class="container">
+  <div class="tabs" id="tabs"></div>
+  <div id="content"></div>
+  <p class="footer-note">Dữ liệu được lưu tự động trên trình duyệt này (localStorage).</p>
+</div>
+
+<script>
+"use strict";
+
+// ====== Cấu hình ======
+const MONTHS = ["2026-06","2026-07","2026-08","2026-09","2026-10","2026-11","2026-12"];
+const NUM_PEOPLE = 6;
+const STORAGE_KEY = "ktx-dien-nuoc-2026";
+
+// ====== Dữ liệu ======
+function lastDayOfMonth(ym) {
+  const [y, m] = ym.split("-").map(Number);
+  return new Date(y, m, 0).getDate();
+}
+function defaultPeriod(ym) {
+  return {
+    start: ym + "-01",
+    end: ym + "-" + String(lastDayOfMonth(ym)).padStart(2, "0"),
+    elec: 0,
+    water: 0,
+    days: Array(NUM_PEOPLE).fill(null) // null = ở đủ đợt
+  };
+}
+function defaultState() {
+  const periods = {};
+  MONTHS.forEach(m => periods[m] = defaultPeriod(m));
+  return {
+    names: Array.from({length: NUM_PEOPLE}, (_, i) => "Người " + (i + 1)),
+    periods,
+    activeTab: MONTHS[0]
+  };
+}
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return defaultState();
+    const s = JSON.parse(raw);
+    const d = defaultState();
+    // hợp nhất để tránh thiếu trường khi nâng cấp
+    s.names = (s.names || d.names).slice(0, NUM_PEOPLE);
+    while (s.names.length < NUM_PEOPLE) s.names.push("Người " + (s.names.length + 1));
+    MONTHS.forEach(m => { if (!s.periods || !s.periods[m]) { s.periods = s.periods || {}; s.periods[m] = defaultPeriod(m); } });
+    if (!s.activeTab) s.activeTab = MONTHS[0];
+    return s;
+  } catch (e) { return defaultState(); }
+}
+function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+
+let state = loadState();
+
+// ====== Tiện ích ======
+function periodDays(p) {
+  const a = new Date(p.start), b = new Date(p.end);
+  const diff = Math.round((b - a) / 86400000) + 1;
+  return diff > 0 ? diff : 0;
+}
+function personDays(p, i) {
+  const full = periodDays(p);
+  if (p.days[i] === null || p.days[i] === undefined || p.days[i] === "") return full;
+  return Math.max(0, Math.min(full, Number(p.days[i]) || 0));
+}
+function fmtMoney(v) {
+  return Math.round(v).toLocaleString("vi-VN") + " ₫";
+}
+function parseMoney(str) {
+  return Number(String(str).replace(/[^\d]/g, "")) || 0;
+}
+function fmtDateVN(iso) {
+  const [y, m, d] = iso.split("-");
+  return d + "/" + m + "/" + y;
+}
+function monthLabel(ym) {
+  const [y, m] = ym.split("-");
+  return "Tháng " + Number(m) + "/" + y;
+}
+// Chia tiền theo tỷ lệ ngày, làm tròn sao cho tổng khớp tuyệt đối
+function splitByDays(total, daysArr) {
+  const sum = daysArr.reduce((a, b) => a + b, 0);
+  if (sum <= 0 || total <= 0) return daysArr.map(() => 0);
+  const raw = daysArr.map(d => total * d / sum);
+  const rounded = raw.map(v => Math.floor(v));
+  let remainder = Math.round(total) - rounded.reduce((a, b) => a + b, 0);
+  // phân phần dư cho những người có phần thập phân lớn nhất
+  const order = raw.map((v, i) => ({ i, frac: v - Math.floor(v) }))
+                   .sort((a, b) => b.frac - a.frac);
+  for (let k = 0; k < order.length && remainder > 0; k++, remainder--) {
+    rounded[order[k].i] += 1;
+  }
+  return rounded;
+}
+
+// ====== Render tabs ======
+function renderTabs() {
+  const el = document.getElementById("tabs");
+  el.innerHTML = "";
+  MONTHS.forEach(m => {
+    const p = state.periods[m];
+    const hasData = (p.elec > 0 || p.water > 0);
+    const btn = document.createElement("button");
+    btn.className = "tab" + (state.activeTab === m ? " active" : "");
+    btn.innerHTML = "T" + Number(m.split("-")[1]) + "/" + m.split("-")[0].slice(2) +
+                    (hasData ? '<span class="dot"></span>' : "");
+    btn.onclick = () => { state.activeTab = m; saveState(); render(); };
+    el.appendChild(btn);
+  });
+  const sum = document.createElement("button");
+  sum.className = "tab summary-tab" + (state.activeTab === "summary" ? " active" : "");
+  sum.textContent = "📊 Tổng kết";
+  sum.onclick = () => { state.activeTab = "summary"; saveState(); render(); };
+  el.appendChild(sum);
+}
+
+// ====== Render trang tháng ======
+function renderMonth(ym) {
+  const p = state.periods[ym];
+  const nDays = periodDays(p);
+  const daysArr = Array.from({length: NUM_PEOPLE}, (_, i) => personDays(p, i));
+  const sumDays = daysArr.reduce((a, b) => a + b, 0);
+  const elecSplit = splitByDays(p.elec, daysArr);
+  const waterSplit = splitByDays(p.water, daysArr);
+  const total = p.elec + p.water;
+  const perDay = sumDays > 0 ? total / sumDays : 0;
+
+  const c = document.getElementById("content");
+  c.innerHTML = `
+    <div class="stat-cards">
+      <div class="stat elec">
+        <div class="stat-label">⚡ Tiền điện</div>
+        <div class="stat-value">${fmtMoney(p.elec)}</div>
+      </div>
+      <div class="stat water">
+        <div class="stat-label">💧 Tiền nước</div>
+        <div class="stat-value">${fmtMoney(p.water)}</div>
+      </div>
+      <div class="stat total">
+        <div class="stat-label">Σ Tổng cộng</div>
+        <div class="stat-value">${fmtMoney(total)}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="icon">🗓️</span> Đợt tính tiền — ${monthLabel(ym)}</h2>
+      <div class="grid cols-4">
+        <div>
+          <label class="field-label">Ngày bắt đầu</label>
+          <input type="date" id="inp-start" value="${p.start}">
+        </div>
+        <div>
+          <label class="field-label">Ngày kết thúc</label>
+          <input type="date" id="inp-end" value="${p.end}">
+        </div>
+        <div>
+          <label class="field-label">⚡ Tổng tiền điện (₫)</label>
+          <input class="money" id="inp-elec" inputmode="numeric"
+                 value="${p.elec ? p.elec.toLocaleString("vi-VN") : ""}" placeholder="0">
+        </div>
+        <div>
+          <label class="field-label">💧 Tổng tiền nước (₫)</label>
+          <input class="money" id="inp-water" inputmode="numeric"
+                 value="${p.water ? p.water.toLocaleString("vi-VN") : ""}" placeholder="0">
+        </div>
+      </div>
+      <p class="hint" style="margin-top:10px">
+        <span class="badge">${fmtDateVN(p.start)} → ${fmtDateVN(p.end)} · ${nDays} ngày</span>
+        ${sumDays > 0 ? `<span class="badge" style="margin-left:6px">≈ ${fmtMoney(perDay)}/người-ngày</span>` : ""}
+        ${nDays <= 0 ? `<span class="badge warn" style="margin-left:6px">⚠ Ngày kết thúc phải sau ngày bắt đầu</span>` : ""}
+      </p>
+    </div>
+
+    <div class="card">
+      <h2><span class="icon">👥</span> Số ngày ở &amp; tiền phải trả từng người</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Thành viên</th>
+              <th>Số ngày ở</th>
+              <th>⚡ Điện</th>
+              <th>💧 Nước</th>
+              <th>Tổng trả</th>
+            </tr>
+          </thead>
+          <tbody id="people-body"></tbody>
+          <tfoot>
+            <tr>
+              <td>Tổng</td>
+              <td style="text-align:right">${sumDays} ngày</td>
+              <td>${fmtMoney(elecSplit.reduce((a,b)=>a+b,0))}</td>
+              <td>${fmtMoney(waterSplit.reduce((a,b)=>a+b,0))}</td>
+              <td class="total-val">${fmtMoney(elecSplit.reduce((a,b)=>a+b,0) + waterSplit.reduce((a,b)=>a+b,0))}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <p class="note">
+        💡 Nhập số ngày mỗi người thực ở trong đợt (mặc định ở đủ ${nDays} ngày — bấm <b>Đủ</b> để đặt lại).
+        Tiền được chia theo tỷ lệ: <b>tiền người A = tổng tiền × ngày A ÷ tổng ngày cả phòng</b>, làm tròn sao cho cộng lại khớp đúng tổng.
+      </p>
+    </div>
+  `;
+
+  // Bảng thành viên
+  const tbody = document.getElementById("people-body");
+  for (let i = 0; i < NUM_PEOPLE; i++) {
+    const tr = document.createElement("tr");
+    const isFull = (p.days[i] === null || p.days[i] === undefined || p.days[i] === "");
+    tr.innerHTML = `
+      <td class="person">
+        <input class="name-input" data-person="${i}" value="${escapeHtml(state.names[i])}" title="Bấm để sửa tên">
+      </td>
+      <td style="text-align:right">
+        <input class="days-input" data-days="${i}" type="number" min="0" max="${nDays}"
+               value="${daysArr[i]}" ${isFull ? 'style="color:var(--muted)"' : ""}>
+        <button class="btn-mini" data-full="${i}" title="Ở đủ cả đợt">Đủ</button>
+      </td>
+      <td><span class="money-val">${fmtMoney(elecSplit[i])}</span></td>
+      <td><span class="money-val">${fmtMoney(waterSplit[i])}</span></td>
+      <td><span class="total-val">${fmtMoney(elecSplit[i] + waterSplit[i])}</span></td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  // ---- Gắn sự kiện ----
+  document.getElementById("inp-start").onchange = e => { p.start = e.target.value; saveState(); render(); };
+  document.getElementById("inp-end").onchange   = e => { p.end = e.target.value; saveState(); render(); };
+
+  const bindMoney = (id, key) => {
+    const inp = document.getElementById(id);
+    inp.addEventListener("input", () => {
+      const v = parseMoney(inp.value);
+      inp.value = v ? v.toLocaleString("vi-VN") : "";
+      p[key] = v; saveState();
+    });
+    inp.addEventListener("blur", () => render());
+  };
+  bindMoney("inp-elec", "elec");
+  bindMoney("inp-water", "water");
+
+  tbody.querySelectorAll(".name-input").forEach(inp => {
+    inp.addEventListener("change", () => {
+      state.names[+inp.dataset.person] = inp.value.trim() || ("Người " + (+inp.dataset.person + 1));
+      saveState(); render();
+    });
+  });
+  tbody.querySelectorAll(".days-input").forEach(inp => {
+    inp.addEventListener("change", () => {
+      const i = +inp.dataset.days;
+      const v = inp.value === "" ? null : Math.max(0, Math.min(nDays, Number(inp.value) || 0));
+      p.days[i] = (v === nDays) ? null : v; // bằng đủ đợt thì lưu null để tự cập nhật khi đổi ngày
+      saveState(); render();
+    });
+  });
+  tbody.querySelectorAll("[data-full]").forEach(btn => {
+    btn.onclick = () => { p.days[+btn.dataset.full] = null; saveState(); render(); };
+  });
+}
+
+// ====== Render trang tổng kết ======
+function renderSummary() {
+  const c = document.getElementById("content");
+  let grandElec = 0, grandWater = 0;
+  const perPersonTotal = Array(NUM_PEOPLE).fill(0);
+  const rows = {}; // rows[m] = {elecSplit, waterSplit, total}
+
+  MONTHS.forEach(m => {
+    const p = state.periods[m];
+    const daysArr = Array.from({length: NUM_PEOPLE}, (_, i) => personDays(p, i));
+    const e = splitByDays(p.elec, daysArr);
+    const w = splitByDays(p.water, daysArr);
+    rows[m] = { e, w, total: p.elec + p.water };
+    grandElec += p.elec; grandWater += p.water;
+    for (let i = 0; i < NUM_PEOPLE; i++) perPersonTotal[i] += e[i] + w[i];
+  });
+  const grand = grandElec + grandWater;
+
+  let bodyHtml = "";
+  MONTHS.forEach(m => {
+    const r = rows[m];
+    const cells = Array.from({length: NUM_PEOPLE}, (_, i) =>
+      `<td>${r.total > 0 ? fmtMoney(r.e[i] + r.w[i]) : "<span style='color:var(--muted)'>—</span>"}</td>`).join("");
+    bodyHtml += `<tr>
+      <td class="person" style="cursor:pointer" data-goto="${m}" title="Mở ${monthLabel(m)}">${monthLabel(m)} ↗</td>
+      ${cells}
+      <td class="total-val">${r.total > 0 ? fmtMoney(r.total) : "—"}</td>
+    </tr>`;
+  });
+
+  c.innerHTML = `
+    <div class="stat-cards">
+      <div class="stat elec">
+        <div class="stat-label">⚡ Tổng tiền điện cả kỳ</div>
+        <div class="stat-value">${fmtMoney(grandElec)}</div>
+      </div>
+      <div class="stat water">
+        <div class="stat-label">💧 Tổng tiền nước cả kỳ</div>
+        <div class="stat-value">${fmtMoney(grandWater)}</div>
+      </div>
+      <div class="stat total">
+        <div class="stat-label">Σ Tổng cộng 6/2026 → 12/2026</div>
+        <div class="stat-value">${fmtMoney(grand)}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="icon">📊</span> Bảng tổng kết theo từng người</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Tháng</th>
+              ${state.names.map(n => `<th>${escapeHtml(n)}</th>`).join("")}
+              <th>Tổng tháng</th>
+            </tr>
+          </thead>
+          <tbody>${bodyHtml}</tbody>
+          <tfoot>
+            <tr>
+              <td>Tổng cả kỳ</td>
+              ${perPersonTotal.map(v => `<td class="highlight-cell">${fmtMoney(v)}</td>`).join("")}
+              <td class="total-val">${fmtMoney(grand)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <p class="note">💡 Bấm vào tên tháng để mở trang nhập liệu của tháng đó. Ô “—” là tháng chưa nhập tiền.</p>
+      <p style="margin-top:12px">
+        <button class="btn-mini" id="btn-export">⬇ Xuất dữ liệu (JSON)</button>
+        <button class="btn-mini" id="btn-reset" style="color:#dc2626">🗑 Xoá toàn bộ dữ liệu</button>
+      </p>
+    </div>
+  `;
+
+  c.querySelectorAll("[data-goto]").forEach(td => {
+    td.onclick = () => { state.activeTab = td.dataset.goto; saveState(); render(); };
+  });
+  document.getElementById("btn-export").onclick = () => {
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "ktx-dien-nuoc-2026.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  document.getElementById("btn-reset").onclick = () => {
+    if (confirm("Xoá toàn bộ dữ liệu đã nhập? Hành động này không thể hoàn tác.")) {
+      localStorage.removeItem(STORAGE_KEY);
+      state = defaultState();
+      render();
+    }
+  };
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, ch =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+}
+
+function render() {
+  renderTabs();
+  if (state.activeTab === "summary") renderSummary();
+  else renderMonth(state.activeTab);
+}
+
+render();
+</script>
+</body>
+</html>
