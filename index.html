@@ -642,24 +642,33 @@ async function syncPull(first = false) {
 setInterval(() => syncPull(false), 10000);
 
 function shareLink() {
-  const payload = btoa(encodeURIComponent(JSON.stringify(syncCfg)));
   const base = location.protocol === "file:"
     ? "https://hdung274520.github.io/Diennuoc1003/"
     : location.origin + location.pathname;
-  return base + "#sync=" + payload;
+  // Database mặc định đã gắn sẵn trong web → link chỉ cần tên phòng
+  if (syncCfg.dbUrl === DEFAULT_DB_URL) {
+    return base + "#room=" + encodeURIComponent(syncCfg.room);
+  }
+  return base + "#sync=" + btoa(encodeURIComponent(JSON.stringify(syncCfg)));
 }
-// Mở link mời (#sync=...) → tự nhận cấu hình đồng bộ
+// Mở link mời (#room=... hoặc #sync=... kiểu cũ) → tự nhận cấu hình đồng bộ
 (function importFromHash() {
-  const m = location.hash.match(/#sync=(.+)/);
-  if (!m) return;
-  try {
-    const cfg = JSON.parse(decodeURIComponent(atob(m[1])));
-    if (cfg && cfg.dbUrl && cfg.room) {
-      syncCfg = { dbUrl: String(cfg.dbUrl), room: String(cfg.room) };
-      localStorage.setItem(SYNC_KEY, JSON.stringify(syncCfg));
-      syncStatus = "connecting";
-    }
-  } catch (e) {}
+  let cfg = null;
+  const room = location.hash.match(/#room=(.+)/);
+  const legacy = location.hash.match(/#sync=(.+)/);
+  if (room) {
+    cfg = { dbUrl: DEFAULT_DB_URL, room: decodeURIComponent(room[1]) };
+  } else if (legacy) {
+    try {
+      const c = JSON.parse(decodeURIComponent(atob(legacy[1])));
+      if (c && c.dbUrl && c.room) cfg = { dbUrl: String(c.dbUrl), room: String(c.room) };
+    } catch (e) {}
+  } else return;
+  if (cfg) {
+    syncCfg = cfg;
+    localStorage.setItem(SYNC_KEY, JSON.stringify(syncCfg));
+    syncStatus = "connecting";
+  }
   history.replaceState(null, "", location.pathname + location.search);
 })();
 
