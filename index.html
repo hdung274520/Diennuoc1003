@@ -155,6 +155,20 @@
   .stat .stat-label { font-size: .78rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
   .stat .stat-value { font-size: 1.35rem; font-weight: 700; margin-top: 4px; }
 
+  /* Đồng bộ */
+  .sync-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .sync-dot { width: 10px; height: 10px; border-radius: 50%; background: #94a3b8; flex-shrink: 0; }
+  .sync-dot.ok { background: var(--green); box-shadow: 0 0 0 3px rgba(22,163,74,.2); }
+  .sync-dot.saving { background: var(--amber); }
+  .sync-dot.error { background: #dc2626; }
+  .sync-text { font-size: .88rem; font-weight: 600; color: var(--muted); flex: 1; }
+  .sync-settings { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+  .share-link {
+    font-size: .78rem; color: var(--primary-dark); background: #eff6ff;
+    padding: 8px 10px; border-radius: 8px; word-break: break-all; margin-top: 8px;
+    font-family: Consolas, monospace;
+  }
+
   /* Ô dán hóa đơn */
   textarea.paste-box {
     width: 100%;
@@ -210,6 +224,8 @@
 <div class="container">
   <div class="tabs" id="tabs"></div>
 
+  <div class="card" id="sync-card"></div>
+
   <div class="card">
     <h2><span class="icon">📋</span> Dán hóa đơn — tự động nhận diện</h2>
     <textarea class="paste-box" id="paste-input"
@@ -218,7 +234,7 @@
   </div>
 
   <div id="content"></div>
-  <p class="footer-note">Dữ liệu được lưu tự động trên trình duyệt này (localStorage).</p>
+  <p class="footer-note">Dữ liệu lưu tự động trên trình duyệt; bật ☁️ Đồng bộ để cả phòng dùng chung một bảng số liệu.</p>
 </div>
 
 <script>
@@ -249,24 +265,46 @@ function defaultState() {
   return {
     names: Array.from({length: NUM_PEOPLE}, (_, i) => "Người " + (i + 1)),
     periods,
-    activeTab: MONTHS[0]
+    activeTab: MONTHS[0],
+    updatedAt: 0
   };
 }
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultState();
-    const s = JSON.parse(raw);
-    const d = defaultState();
-    // hợp nhất để tránh thiếu trường khi nâng cấp
-    s.names = (s.names || d.names).slice(0, NUM_PEOPLE);
-    while (s.names.length < NUM_PEOPLE) s.names.push("Người " + (s.names.length + 1));
-    MONTHS.forEach(m => { if (!s.periods || !s.periods[m]) { s.periods = s.periods || {}; s.periods[m] = defaultPeriod(m); } });
-    if (!s.activeTab) s.activeTab = MONTHS[0];
-    return s;
-  } catch (e) { return defaultState(); }
+// Chuẩn hóa dữ liệu bất kỳ (localStorage / đám mây / file nhập) về cấu trúc chuẩn
+function normalize(s) {
+  const out = defaultState();
+  if (!s || typeof s !== "object") return out;
+  if (Array.isArray(s.names)) {
+    s.names.slice(0, NUM_PEOPLE).forEach((n, i) => { if (n) out.names[i] = String(n); });
+  }
+  MONTHS.forEach(m => {
+    const p = s.periods && s.periods[m];
+    if (!p) return;
+    const dp = out.periods[m];
+    if (p.start) dp.start = p.start;
+    if (p.end) dp.end = p.end;
+    dp.elec = Number(p.elec) || 0;
+    dp.water = Number(p.water) || 0;
+    if (Array.isArray(p.days)) {
+      for (let i = 0; i < NUM_PEOPLE; i++) {
+        dp.days[i] = (p.days[i] === null || p.days[i] === undefined || p.days[i] === "") ? null : Number(p.days[i]);
+      }
+    }
+    if (p.meta) dp.meta = p.meta;
+  });
+  out.activeTab = (MONTHS.includes(s.activeTab) || s.activeTab === "summary") ? s.activeTab : MONTHS[0];
+  out.updatedAt = Number(s.updatedAt) || 0;
+  return out;
 }
-function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+function loadState() {
+  try { return normalize(JSON.parse(localStorage.getItem(STORAGE_KEY))); }
+  catch (e) { return defaultState(); }
+}
+// bump=false: thay đổi phụ (chuyển tab) — không tính là dữ liệu mới, không đẩy lên mây
+function saveState(bump = true) {
+  if (bump) state.updatedAt = Date.now();
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  if (bump) scheduleSyncPush();
+}
 
 let state = loadState();
 
@@ -434,6 +472,152 @@ function renderParsePreview() {
   }
 }
 
+// ====== Đồng bộ qua Firebase Realtime Database ======
+const SYNC_KEY = "ktx-sync-config";
+let syncCfg = null;
+try { syncCfg = JSON.parse(localStorage.getItem(SYNC_KEY)); } catch (e) {}
+let syncStatus = syncCfg ? "connecting" : "off"; // off | connecting | ok | saving | error
+let syncPanelOpen = false;
+let pushTimer = null;
+
+function syncEndpoint() {
+  return syncCfg.dbUrl.replace(/\/+$/, "") + "/rooms/" + encodeURIComponent(syncCfg.room) + ".json";
+}
+function setSyncStatus(st) { syncStatus = st; renderSyncCard(); }
+
+async function syncPush() {
+  if (!syncCfg) return;
+  setSyncStatus("saving");
+  try {
+    const res = await fetch(syncEndpoint(), { method: "PUT", body: JSON.stringify(state) });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    setSyncStatus("ok");
+  } catch (e) { setSyncStatus("error"); }
+}
+function scheduleSyncPush() {
+  if (!syncCfg) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(syncPush, 800); // gộp nhiều thay đổi liên tiếp thành 1 lần đẩy
+}
+async function syncPull(first = false) {
+  if (!syncCfg) return;
+  try {
+    const res = await fetch(syncEndpoint());
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const remote = await res.json();
+    const remoteAt = remote ? Number(remote.updatedAt) || 0 : 0;
+    if (remoteAt > (state.updatedAt || 0)) {
+      const el = document.activeElement;
+      if (!first && el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) {
+        setSyncStatus("ok"); // người dùng đang gõ — áp dụng ở lượt kiểm tra sau
+        return;
+      }
+      const tab = state.activeTab; // giữ nguyên tab đang xem trên máy này
+      state = normalize(remote);
+      state.activeTab = tab;
+      saveState(false);
+      render();
+      setSyncStatus("ok");
+    } else if (first && (state.updatedAt || 0) > remoteAt) {
+      syncPush(); // máy này có dữ liệu mới hơn (hoặc mây trống) → đẩy lên
+    } else {
+      setSyncStatus("ok");
+    }
+  } catch (e) { setSyncStatus("error"); }
+}
+setInterval(() => syncPull(false), 10000);
+
+function shareLink() {
+  const payload = btoa(encodeURIComponent(JSON.stringify(syncCfg)));
+  const base = location.protocol === "file:"
+    ? "https://hdung274520.github.io/Diennuoc1003/"
+    : location.origin + location.pathname;
+  return base + "#sync=" + payload;
+}
+// Mở link mời (#sync=...) → tự nhận cấu hình đồng bộ
+(function importFromHash() {
+  const m = location.hash.match(/#sync=(.+)/);
+  if (!m) return;
+  try {
+    const cfg = JSON.parse(decodeURIComponent(atob(m[1])));
+    if (cfg && cfg.dbUrl && cfg.room) {
+      syncCfg = { dbUrl: String(cfg.dbUrl), room: String(cfg.room) };
+      localStorage.setItem(SYNC_KEY, JSON.stringify(syncCfg));
+      syncStatus = "connecting";
+    }
+  } catch (e) {}
+  history.replaceState(null, "", location.pathname + location.search);
+})();
+
+function renderSyncCard() {
+  const el = document.getElementById("sync-card");
+  const dotCls = syncStatus === "ok" ? "ok" : syncStatus === "saving" ? "saving" : syncStatus === "error" ? "error" : "";
+  const statusText = !syncCfg ? "Chưa bật đồng bộ — dữ liệu chỉ lưu trên máy này"
+    : syncStatus === "ok" ? `Đã đồng bộ · phòng “${escapeHtml(syncCfg.room)}”`
+    : syncStatus === "saving" ? "Đang lưu lên đám mây…"
+    : syncStatus === "error" ? "⚠ Lỗi kết nối — kiểm tra mạng hoặc URL Firebase"
+    : "Đang kết nối…";
+  el.innerHTML = `
+    <div class="sync-bar">
+      <span class="sync-dot ${dotCls}"></span>
+      <span class="sync-text">☁️ ${statusText}</span>
+      <button class="btn-mini" id="sync-toggle">${syncPanelOpen ? "Đóng" : (syncCfg ? "Cài đặt" : "Bật đồng bộ")}</button>
+    </div>
+    ${syncPanelOpen ? `
+    <div class="sync-settings">
+      <div class="grid cols-2">
+        <div>
+          <label class="field-label">URL Firebase Realtime Database</label>
+          <input class="name-input" id="sync-db" placeholder="https://ten-du-an-default-rtdb.asia-southeast1.firebasedatabase.app"
+                 value="${syncCfg ? escapeHtml(syncCfg.dbUrl) : ""}">
+        </div>
+        <div>
+          <label class="field-label">Tên phòng (mã chung cả phòng, tự đặt)</label>
+          <input class="name-input" id="sync-room" placeholder="vd: phong1003" value="${syncCfg ? escapeHtml(syncCfg.room) : ""}">
+        </div>
+      </div>
+      <p style="margin-top:12px">
+        <button class="btn-apply" id="sync-connect">🔗 Kết nối</button>
+        ${syncCfg ? `<button class="btn-mini" id="sync-copy" style="margin-left:8px">📤 Copy link mời cả phòng</button>
+        <button class="btn-mini" id="sync-off" style="margin-left:8px;color:#dc2626">Ngắt đồng bộ</button>` : ""}
+      </p>
+      ${syncCfg ? `<div class="share-link">${escapeHtml(shareLink())}</div>
+      <p class="note">Gửi link trên cho các thành viên — mở link là tự kết nối vào cùng phòng, không cần cài đặt gì.</p>` : ""}
+      <p class="note">Chưa có Firebase? Vào <b>console.firebase.google.com</b> → Add project → trong project chọn <b>Build → Realtime Database → Create database</b> (chọn Singapore, chế độ <b>test mode</b>) → copy URL dạng <i>https://…firebasedatabase.app</i> dán vào ô trên. Cả phòng chỉ cần 1 người làm 1 lần.</p>
+    </div>` : ""}
+  `;
+
+  document.getElementById("sync-toggle").onclick = () => { syncPanelOpen = !syncPanelOpen; renderSyncCard(); };
+  if (!syncPanelOpen) return;
+
+  document.getElementById("sync-connect").onclick = () => {
+    const dbUrl = document.getElementById("sync-db").value.trim();
+    const room = document.getElementById("sync-room").value.trim();
+    if (!/^https:\/\/.+/.test(dbUrl)) { alert("URL Firebase phải bắt đầu bằng https://"); return; }
+    if (!room) { alert("Hãy đặt tên phòng (cả phòng dùng chung một tên)."); return; }
+    syncCfg = { dbUrl, room };
+    localStorage.setItem(SYNC_KEY, JSON.stringify(syncCfg));
+    setSyncStatus("connecting");
+    syncPull(true);
+  };
+  const copyBtn = document.getElementById("sync-copy");
+  if (copyBtn) copyBtn.onclick = () => {
+    navigator.clipboard.writeText(shareLink()).then(() => {
+      copyBtn.textContent = "✓ Đã copy!";
+      setTimeout(renderSyncCard, 1500);
+    });
+  };
+  const offBtn = document.getElementById("sync-off");
+  if (offBtn) offBtn.onclick = () => {
+    if (confirm("Ngắt đồng bộ trên máy này? Dữ liệu trên đám mây và các máy khác vẫn còn.")) {
+      syncCfg = null;
+      localStorage.removeItem(SYNC_KEY);
+      syncStatus = "off";
+      renderSyncCard();
+    }
+  };
+}
+
 // ====== Render tabs ======
 function renderTabs() {
   const el = document.getElementById("tabs");
@@ -445,13 +629,13 @@ function renderTabs() {
     btn.className = "tab" + (state.activeTab === m ? " active" : "");
     btn.innerHTML = "T" + Number(m.split("-")[1]) + "/" + m.split("-")[0].slice(2) +
                     (hasData ? '<span class="dot"></span>' : "");
-    btn.onclick = () => { state.activeTab = m; saveState(); render(); };
+    btn.onclick = () => { state.activeTab = m; saveState(false); render(); };
     el.appendChild(btn);
   });
   const sum = document.createElement("button");
   sum.className = "tab summary-tab" + (state.activeTab === "summary" ? " active" : "");
   sum.textContent = "📊 Tổng kết";
-  sum.onclick = () => { state.activeTab = "summary"; saveState(); render(); };
+  sum.onclick = () => { state.activeTab = "summary"; saveState(false); render(); };
   el.appendChild(sum);
 }
 
@@ -672,13 +856,14 @@ function renderSummary() {
       <p class="note">💡 Bấm vào tên tháng để mở trang nhập liệu của tháng đó. Ô “—” là tháng chưa nhập tiền.</p>
       <p style="margin-top:12px">
         <button class="btn-mini" id="btn-export">⬇ Xuất dữ liệu (JSON)</button>
+        <button class="btn-mini" id="btn-import">⬆ Nhập dữ liệu (JSON)</button>
         <button class="btn-mini" id="btn-reset" style="color:#dc2626">🗑 Xoá toàn bộ dữ liệu</button>
       </p>
     </div>
   `;
 
   c.querySelectorAll("[data-goto]").forEach(td => {
-    td.onclick = () => { state.activeTab = td.dataset.goto; saveState(); render(); };
+    td.onclick = () => { state.activeTab = td.dataset.goto; saveState(false); render(); };
   });
   document.getElementById("btn-export").onclick = () => {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
@@ -688,10 +873,24 @@ function renderSummary() {
     a.click();
     URL.revokeObjectURL(a.href);
   };
+  document.getElementById("btn-import").onclick = () => {
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = ".json,application/json";
+    inp.onchange = () => {
+      const f = inp.files[0];
+      if (!f) return;
+      f.text().then(t => {
+        try { state = normalize(JSON.parse(t)); saveState(); render(); }
+        catch (e) { alert("File JSON không hợp lệ."); }
+      });
+    };
+    inp.click();
+  };
   document.getElementById("btn-reset").onclick = () => {
-    if (confirm("Xoá toàn bộ dữ liệu đã nhập? Hành động này không thể hoàn tác.")) {
-      localStorage.removeItem(STORAGE_KEY);
+    if (confirm("Xoá toàn bộ dữ liệu đã nhập? Nếu đang đồng bộ, dữ liệu trên đám mây cũng bị xoá theo. Hành động này không thể hoàn tác.")) {
       state = defaultState();
+      saveState(); // đánh dấu là dữ liệu mới nhất để đồng bộ việc xoá lên mây
       render();
     }
   };
@@ -703,6 +902,7 @@ function escapeHtml(s) {
 }
 
 function render() {
+  renderSyncCard();
   renderTabs();
   if (state.activeTab === "summary") renderSummary();
   else renderMonth(state.activeTab);
@@ -711,6 +911,7 @@ function render() {
 document.getElementById("paste-input").addEventListener("input", renderParsePreview);
 
 render();
+if (syncCfg) syncPull(true);
 </script>
 </body>
 </html>
