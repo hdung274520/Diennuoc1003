@@ -474,6 +474,7 @@ function renderParsePreview() {
 
 // ====== Đồng bộ qua Firebase Realtime Database ======
 const SYNC_KEY = "ktx-sync-config";
+const DEFAULT_DB_URL = "https://diennuoc1003-default-rtdb.asia-southeast1.firebasedatabase.app";
 let syncCfg = null;
 try { syncCfg = JSON.parse(localStorage.getItem(SYNC_KEY)); } catch (e) {}
 let syncStatus = syncCfg ? "connecting" : "off"; // off | connecting | ok | saving | error
@@ -569,7 +570,7 @@ function renderSyncCard() {
         <div>
           <label class="field-label">URL Firebase Realtime Database</label>
           <input class="name-input" id="sync-db" placeholder="https://ten-du-an-default-rtdb.asia-southeast1.firebasedatabase.app"
-                 value="${syncCfg ? escapeHtml(syncCfg.dbUrl) : ""}">
+                 value="${escapeHtml(syncCfg ? syncCfg.dbUrl : DEFAULT_DB_URL)}">
         </div>
         <div>
           <label class="field-label">Tên phòng (mã chung cả phòng, tự đặt)</label>
