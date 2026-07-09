@@ -250,46 +250,58 @@ function lastDayOfMonth(ym) {
   const [y, m] = ym.split("-").map(Number);
   return new Date(y, m, 0).getDate();
 }
+// Thành viên theo tháng: T6 có Phước & Nguyên, từ T7 thay bằng Hưng & Thuận
+const NAMES_T6 = ["An", "Dũng", "Tủn", "Thượng", "Phước", "Nguyên"];
+const NAMES_T7 = ["An", "Dũng", "Tủn", "Thượng", "Hưng", "Thuận"];
+function defaultNames(ym) { return (ym === "2026-06" ? NAMES_T6 : NAMES_T7).slice(); }
+
 function defaultPeriod(ym) {
   return {
     start: ym + "-01",
     end: ym + "-" + String(lastDayOfMonth(ym)).padStart(2, "0"),
     elec: 0,
     water: 0,
-    days: Array(NUM_PEOPLE).fill(null) // null = ở đủ đợt
+    days: Array(NUM_PEOPLE).fill(null), // null = ở đủ đợt
+    names: defaultNames(ym)
   };
 }
 function defaultState() {
   const periods = {};
-  MONTHS.forEach(m => periods[m] = defaultPeriod(m));
-  return {
-    names: Array.from({length: NUM_PEOPLE}, (_, i) => "Người " + (i + 1)),
-    periods,
-    activeTab: MONTHS[0],
-    updatedAt: 0
-  };
+  MONTHS.forEach((m, idx) => {
+    periods[m] = defaultPeriod(m);
+    // quy ước: ngày kết thúc đợt trước = ngày bắt đầu đợt sau
+    if (idx > 0) periods[m].start = periods[MONTHS[idx - 1]].end;
+  });
+  return { periods, activeTab: MONTHS[0], updatedAt: 0 };
 }
 // Chuẩn hóa dữ liệu bất kỳ (localStorage / đám mây / file nhập) về cấu trúc chuẩn
 function normalize(s) {
   const out = defaultState();
   if (!s || typeof s !== "object") return out;
-  if (Array.isArray(s.names)) {
-    s.names.slice(0, NUM_PEOPLE).forEach((n, i) => { if (n) out.names[i] = String(n); });
-  }
   MONTHS.forEach(m => {
     const p = s.periods && s.periods[m];
-    if (!p) return;
     const dp = out.periods[m];
-    if (p.start) dp.start = p.start;
-    if (p.end) dp.end = p.end;
-    dp.elec = Number(p.elec) || 0;
-    dp.water = Number(p.water) || 0;
-    if (Array.isArray(p.days)) {
+    if (p) {
+      if (p.start) dp.start = p.start;
+      if (p.end) dp.end = p.end;
+      dp.elec = Number(p.elec) || 0;
+      dp.water = Number(p.water) || 0;
+      if (Array.isArray(p.days)) {
+        for (let i = 0; i < NUM_PEOPLE; i++) {
+          dp.days[i] = (p.days[i] === null || p.days[i] === undefined || p.days[i] === "") ? null : Number(p.days[i]);
+        }
+      }
+      if (p.meta) dp.meta = p.meta;
+    }
+    // Tên: ưu tiên tên theo tháng (định dạng mới), rồi tên chung (định dạng cũ);
+    // tên mặc định kiểu "Người N" bị bỏ qua để nhường chỗ cho tên thật của phòng
+    const src = (p && Array.isArray(p.names)) ? p.names : (Array.isArray(s.names) ? s.names : null);
+    if (src) {
       for (let i = 0; i < NUM_PEOPLE; i++) {
-        dp.days[i] = (p.days[i] === null || p.days[i] === undefined || p.days[i] === "") ? null : Number(p.days[i]);
+        const n = src[i];
+        if (n && !/^Người \d+$/.test(String(n).trim())) dp.names[i] = String(n);
       }
     }
-    if (p.meta) dp.meta = p.meta;
   });
   out.activeTab = (MONTHS.includes(s.activeTab) || s.activeTab === "summary") ? s.activeTab : MONTHS[0];
   out.updatedAt = Number(s.updatedAt) || 0;
@@ -347,12 +359,6 @@ function splitByDays(total, daysArr) {
     rounded[order[k].i] += 1;
   }
   return rounded;
-}
-
-function addDaysISO(iso, n) {
-  const d = new Date(iso + "T00:00:00Z");
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
 }
 
 // ====== Nhận diện hóa đơn dán vào ======
@@ -456,9 +462,10 @@ function renderParsePreview() {
       if (r.elec !== null) p.elec = r.elec;
       if (r.water !== null) p.water = r.water;
       if (r.billDate) p.end = r.billDate;
-      // Ngày bắt đầu đợt = ngày kết thúc đợt tháng trước + 1
+      // Quy ước: ngày kết thúc đợt trước = ngày bắt đầu đợt sau
       const idx = MONTHS.indexOf(r.month);
-      if (idx > 0) p.start = addDaysISO(state.periods[MONTHS[idx - 1]].end, 1);
+      if (idx > 0) p.start = state.periods[MONTHS[idx - 1]].end;
+      if (idx < MONTHS.length - 1) state.periods[MONTHS[idx + 1]].start = p.end;
       p.meta = {
         elecStart: r.elecStart, elecEnd: r.elecEnd, elecUse: r.elecUse,
         waterStart: r.waterStart, waterEnd: r.waterEnd, waterUse: r.waterUse
@@ -738,7 +745,7 @@ function renderMonth(ym) {
     const isFull = (p.days[i] === null || p.days[i] === undefined || p.days[i] === "");
     tr.innerHTML = `
       <td class="person">
-        <input class="name-input" data-person="${i}" value="${escapeHtml(state.names[i])}" title="Bấm để sửa tên">
+        <input class="name-input" data-person="${i}" value="${escapeHtml(p.names[i])}" title="Sửa tên — áp dụng từ tháng này trở đi">
       </td>
       <td style="text-align:right">
         <input class="days-input" data-days="${i}" type="number" min="0" max="${nDays}"
@@ -754,7 +761,13 @@ function renderMonth(ym) {
 
   // ---- Gắn sự kiện ----
   document.getElementById("inp-start").onchange = e => { p.start = e.target.value; saveState(); render(); };
-  document.getElementById("inp-end").onchange   = e => { p.end = e.target.value; saveState(); render(); };
+  document.getElementById("inp-end").onchange   = e => {
+    p.end = e.target.value;
+    // quy ước: ngày kết thúc đợt này = ngày bắt đầu đợt sau
+    const idx = MONTHS.indexOf(ym);
+    if (idx < MONTHS.length - 1) state.periods[MONTHS[idx + 1]].start = p.end;
+    saveState(); render();
+  };
 
   const bindMoney = (id, key) => {
     const inp = document.getElementById(id);
@@ -770,7 +783,14 @@ function renderMonth(ym) {
 
   tbody.querySelectorAll(".name-input").forEach(inp => {
     inp.addEventListener("change", () => {
-      state.names[+inp.dataset.person] = inp.value.trim() || ("Người " + (+inp.dataset.person + 1));
+      const i = +inp.dataset.person;
+      const oldName = p.names[i];
+      const newName = inp.value.trim() || oldName;
+      // đổi tên từ tháng này trở đi (chỉ ở các tháng vị trí đó vẫn còn là tên cũ)
+      for (let k = MONTHS.indexOf(ym); k < MONTHS.length; k++) {
+        const pk = state.periods[MONTHS[k]];
+        if (pk.names[i] === oldName) pk.names[i] = newName;
+      }
       saveState(); render();
     });
   });
@@ -790,26 +810,34 @@ function renderMonth(ym) {
 // ====== Render trang tổng kết ======
 function renderSummary() {
   const c = document.getElementById("content");
+  // Gom theo TÊN vì thành viên có thể thay đổi giữa các tháng
+  const allNames = [];
+  MONTHS.forEach(m => state.periods[m].names.forEach(n => { if (!allNames.includes(n)) allNames.push(n); }));
+
   let grandElec = 0, grandWater = 0;
-  const perPersonTotal = Array(NUM_PEOPLE).fill(0);
-  const rows = {}; // rows[m] = {elecSplit, waterSplit, total}
+  const perName = {};
+  allNames.forEach(n => perName[n] = 0);
+  const rows = {}; // rows[m] = {p, e, w, total}
 
   MONTHS.forEach(m => {
     const p = state.periods[m];
     const daysArr = Array.from({length: NUM_PEOPLE}, (_, i) => personDays(p, i));
     const e = splitByDays(p.elec, daysArr);
     const w = splitByDays(p.water, daysArr);
-    rows[m] = { e, w, total: p.elec + p.water };
+    rows[m] = { p, e, w, total: p.elec + p.water };
     grandElec += p.elec; grandWater += p.water;
-    for (let i = 0; i < NUM_PEOPLE; i++) perPersonTotal[i] += e[i] + w[i];
+    for (let i = 0; i < NUM_PEOPLE; i++) perName[p.names[i]] += e[i] + w[i];
   });
   const grand = grandElec + grandWater;
 
   let bodyHtml = "";
   MONTHS.forEach(m => {
     const r = rows[m];
-    const cells = Array.from({length: NUM_PEOPLE}, (_, i) =>
-      `<td>${r.total > 0 ? fmtMoney(r.e[i] + r.w[i]) : "<span style='color:var(--muted)'>—</span>"}</td>`).join("");
+    const cells = allNames.map(n => {
+      const i = r.p.names.indexOf(n);
+      if (i === -1) return `<td><span style='color:var(--border)'>·</span></td>`; // không ở tháng này
+      return `<td>${r.total > 0 ? fmtMoney(r.e[i] + r.w[i]) : "<span style='color:var(--muted)'>—</span>"}</td>`;
+    }).join("");
     bodyHtml += `<tr>
       <td class="person" style="cursor:pointer" data-goto="${m}" title="Mở ${monthLabel(m)}">${monthLabel(m)} ↗</td>
       ${cells}
@@ -840,7 +868,7 @@ function renderSummary() {
           <thead>
             <tr>
               <th>Tháng</th>
-              ${state.names.map(n => `<th>${escapeHtml(n)}</th>`).join("")}
+              ${allNames.map(n => `<th>${escapeHtml(n)}</th>`).join("")}
               <th>Tổng tháng</th>
             </tr>
           </thead>
@@ -848,13 +876,13 @@ function renderSummary() {
           <tfoot>
             <tr>
               <td>Tổng cả kỳ</td>
-              ${perPersonTotal.map(v => `<td class="highlight-cell">${fmtMoney(v)}</td>`).join("")}
+              ${allNames.map(n => `<td class="highlight-cell">${fmtMoney(perName[n])}</td>`).join("")}
               <td class="total-val">${fmtMoney(grand)}</td>
             </tr>
           </tfoot>
         </table>
       </div>
-      <p class="note">💡 Bấm vào tên tháng để mở trang nhập liệu của tháng đó. Ô “—” là tháng chưa nhập tiền.</p>
+      <p class="note">💡 Bấm vào tên tháng để mở trang nhập liệu của tháng đó. Ô “—” là tháng chưa nhập tiền; dấu “·” là người đó không ở phòng tháng đó.</p>
       <p style="margin-top:12px">
         <button class="btn-mini" id="btn-export">⬇ Xuất dữ liệu (JSON)</button>
         <button class="btn-mini" id="btn-import">⬆ Nhập dữ liệu (JSON)</button>
