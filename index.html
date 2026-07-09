@@ -155,6 +155,46 @@
   .stat .stat-label { font-size: .78rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
   .stat .stat-value { font-size: 1.35rem; font-weight: 700; margin-top: 4px; }
 
+  /* Ô dán hóa đơn */
+  textarea.paste-box {
+    width: 100%;
+    min-height: 90px;
+    padding: 12px;
+    border: 1.5px dashed #93c5fd;
+    border-radius: 10px;
+    font-family: inherit;
+    font-size: .88rem;
+    resize: vertical;
+    background: #f8fafc;
+  }
+  textarea.paste-box:focus { outline: none; border-color: var(--primary); background: #fff; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+  .parse-preview {
+    margin-top: 12px;
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    background: #f8fafc;
+  }
+  .parse-preview ul { list-style: none; }
+  .parse-preview li { padding: 4px 0; font-size: .9rem; }
+  .parse-preview li b { color: var(--primary-dark); }
+  .parse-preview .warn-line { color: var(--amber); font-weight: 600; }
+  .parse-preview .err-line { color: #dc2626; font-weight: 600; }
+  .btn-apply {
+    margin-top: 12px;
+    background: var(--green);
+    border: none;
+    color: #fff;
+    font-weight: 700;
+    font-size: .92rem;
+    padding: 10px 22px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .btn-apply:hover { background: #15803d; }
+  .btn-apply:disabled { background: #cbd5e1; cursor: not-allowed; }
+
   .note { font-size: .8rem; color: var(--muted); margin-top: 10px; line-height: 1.5; }
   .footer-note { text-align: center; color: var(--muted); font-size: .78rem; margin-top: 8px; }
   .highlight-cell { background: #f0fdf4; }
@@ -169,6 +209,14 @@
 
 <div class="container">
   <div class="tabs" id="tabs"></div>
+
+  <div class="card">
+    <h2><span class="icon">📋</span> Dán hóa đơn — tự động nhận diện</h2>
+    <textarea class="paste-box" id="paste-input"
+      placeholder="Copy toàn bộ nội dung hóa đơn (từ web/app KTX) rồi dán vào đây... Web sẽ tự nhận tháng, tiền điện, tiền nước, chỉ số công tơ."></textarea>
+    <div id="paste-result"></div>
+  </div>
+
   <div id="content"></div>
   <p class="footer-note">Dữ liệu được lưu tự động trên trình duyệt này (localStorage).</p>
 </div>
@@ -263,6 +311,129 @@ function splitByDays(total, daysArr) {
   return rounded;
 }
 
+function addDaysISO(iso, n) {
+  const d = new Date(iso + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// ====== Nhận diện hóa đơn dán vào ======
+function parseBill(text) {
+  const r = {
+    month: null, billDate: null,
+    elec: null, water: null, total: null, people: null,
+    elecStart: null, elecEnd: null, elecUse: null,
+    waterStart: null, waterEnd: null, waterUse: null
+  };
+  const num = s => Number(String(s).replace(/[.,\s]/g, "")) || 0;
+  let ctx = null; // "elec" | "water" — ngữ cảnh dòng gần nhất có đơn vị
+
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+
+    // Ngày đầy đủ dd/mm/yyyy → ngày chốt hóa đơn
+    const fd = line.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (fd && !r.billDate) {
+      r.billDate = fd[3] + "-" + fd[2].padStart(2, "0") + "-" + fd[1].padStart(2, "0");
+    }
+    // Tháng dạng m/yyyy (loại bỏ các ngày đầy đủ trước khi tìm)
+    if (!r.month) {
+      const mm = line.replace(/\d{1,2}\/\d{1,2}\/\d{4}/g, " ").match(/(\d{1,2})\s*\/\s*(\d{4})/);
+      if (mm) r.month = mm[2] + "-" + mm[1].padStart(2, "0");
+    }
+
+    if (/k\s*wh/i.test(line)) ctx = "elec";
+    else if (/m\s*3|m³/i.test(line)) ctx = "water";
+
+    let m;
+    if ((m = line.match(/ch[ỉi]\s*s[ốo]\s*[đd][ầa]u\s*:?\s*([\d.,]+)/i))) {
+      if (ctx === "elec") r.elecStart = num(m[1]);
+      else if (ctx === "water") r.waterStart = num(m[1]);
+    } else if ((m = line.match(/ch[ỉi]\s*s[ốo]\s*cu[ốo]i\s*:?\s*([\d.,]+)/i))) {
+      if (ctx === "elec") r.elecEnd = num(m[1]);
+      else if (ctx === "water") r.waterEnd = num(m[1]);
+    } else if ((m = line.match(/s[ửu]\s*d[ụu]ng\s*:?\s*([\d.,]+)/i))) {
+      if (ctx === "elec") r.elecUse = num(m[1]);
+      else if (ctx === "water") r.waterUse = num(m[1]);
+    } else if ((m = line.match(/s[ốo]\s*ti[ềe]n\s*:?\s*([\d.,]+)\s*đ/i))) {
+      if (ctx === "elec" && r.elec === null) r.elec = num(m[1]);
+      else if (ctx === "water" && r.water === null) r.water = num(m[1]);
+    } else if ((m = line.match(/^([\d.,]+)\s*đ/i))) {
+      const v = num(m[1]);
+      if (v > 0 && r.total === null) r.total = v; // dòng tổng cộng đứng riêng
+    }
+
+    const pm = line.match(/(\d+)\s*sinh\s*vi[êe]n/i);
+    if (pm) r.people = Number(pm[1]);
+  }
+  // Không thấy "6/2026" thì suy ra tháng từ ngày chốt
+  if (!r.month && r.billDate) r.month = r.billDate.slice(0, 7);
+  return r;
+}
+
+function renderParsePreview() {
+  const text = document.getElementById("paste-input").value;
+  const box = document.getElementById("paste-result");
+  if (!text.trim()) { box.innerHTML = ""; return; }
+
+  const r = parseBill(text);
+  const found = (r.elec !== null || r.water !== null);
+  const monthOk = r.month && MONTHS.includes(r.month);
+
+  const lines = [];
+  if (r.month)   lines.push(`📅 Kỳ hóa đơn: <b>${monthLabel(r.month)}</b>${monthOk ? "" : ' — <span class="err-line">ngoài phạm vi T6→T12/2026!</span>'}`);
+  else           lines.push(`<span class="err-line">⚠ Không nhận ra tháng của hóa đơn</span>`);
+  if (r.billDate) lines.push(`🗓️ Ngày chốt: <b>${fmtDateVN(r.billDate)}</b> (sẽ đặt làm ngày kết thúc đợt)`);
+  if (r.elec !== null) {
+    const meter = (r.elecStart !== null && r.elecEnd !== null) ? ` — chỉ số ${r.elecStart} → ${r.elecEnd}` : "";
+    lines.push(`⚡ Tiền điện: <b>${fmtMoney(r.elec)}</b>${r.elecUse !== null ? ` (${r.elecUse} kWh${meter})` : ""}`);
+  } else lines.push(`<span class="warn-line">⚡ Không thấy tiền điện</span>`);
+  if (r.water !== null) {
+    const meter = (r.waterStart !== null && r.waterEnd !== null) ? ` — chỉ số ${r.waterStart} → ${r.waterEnd}` : "";
+    lines.push(`💧 Tiền nước: <b>${fmtMoney(r.water)}</b>${r.waterUse !== null ? ` (${r.waterUse} m³${meter})` : ""}`);
+  } else lines.push(`<span class="warn-line">💧 Không thấy tiền nước</span>`);
+  if (r.total !== null) {
+    const calc = (r.elec || 0) + (r.water || 0);
+    lines.push(calc === r.total
+      ? `Σ Tổng cộng: <b>${fmtMoney(r.total)}</b> ✓ khớp điện + nước`
+      : `<span class="warn-line">Σ Tổng trên bill ${fmtMoney(r.total)} ≠ điện + nước ${fmtMoney(calc)} — kiểm tra lại!</span>`);
+  }
+  if (r.people !== null && r.people !== NUM_PEOPLE) {
+    lines.push(`<span class="warn-line">👥 Bill ghi ${r.people} sinh viên, web đang chia cho ${NUM_PEOPLE} người</span>`);
+  }
+
+  const canApply = found && monthOk;
+  box.innerHTML = `
+    <div class="parse-preview">
+      <ul>${lines.map(l => `<li>${l}</li>`).join("")}</ul>
+      <button class="btn-apply" id="btn-apply-bill" ${canApply ? "" : "disabled"}>
+        ✔ Áp dụng vào ${monthOk ? monthLabel(r.month) : "…"}
+      </button>
+    </div>`;
+
+  if (canApply) {
+    document.getElementById("btn-apply-bill").onclick = () => {
+      const p = state.periods[r.month];
+      if (r.elec !== null) p.elec = r.elec;
+      if (r.water !== null) p.water = r.water;
+      if (r.billDate) p.end = r.billDate;
+      // Ngày bắt đầu đợt = ngày kết thúc đợt tháng trước + 1
+      const idx = MONTHS.indexOf(r.month);
+      if (idx > 0) p.start = addDaysISO(state.periods[MONTHS[idx - 1]].end, 1);
+      p.meta = {
+        elecStart: r.elecStart, elecEnd: r.elecEnd, elecUse: r.elecUse,
+        waterStart: r.waterStart, waterEnd: r.waterEnd, waterUse: r.waterUse
+      };
+      state.activeTab = r.month;
+      saveState();
+      document.getElementById("paste-input").value = "";
+      document.getElementById("paste-result").innerHTML = "";
+      render();
+    };
+  }
+}
+
 // ====== Render tabs ======
 function renderTabs() {
   const el = document.getElementById("tabs");
@@ -337,6 +508,8 @@ function renderMonth(ym) {
       <p class="hint" style="margin-top:10px">
         <span class="badge">${fmtDateVN(p.start)} → ${fmtDateVN(p.end)} · ${nDays} ngày</span>
         ${sumDays > 0 ? `<span class="badge" style="margin-left:6px">≈ ${fmtMoney(perDay)}/người-ngày</span>` : ""}
+        ${p.meta && p.meta.elecEnd !== null && p.meta.elecEnd !== undefined ? `<span class="badge warn" style="margin-left:6px">⚡ ${p.meta.elecStart} → ${p.meta.elecEnd} (${p.meta.elecUse} kWh)</span>` : ""}
+        ${p.meta && p.meta.waterEnd !== null && p.meta.waterEnd !== undefined ? `<span class="badge" style="margin-left:6px;background:#f0f9ff;color:#0369a1">💧 ${p.meta.waterStart} → ${p.meta.waterEnd} (${p.meta.waterUse} m³)</span>` : ""}
         ${nDays <= 0 ? `<span class="badge warn" style="margin-left:6px">⚠ Ngày kết thúc phải sau ngày bắt đầu</span>` : ""}
       </p>
     </div>
@@ -534,6 +707,8 @@ function render() {
   if (state.activeTab === "summary") renderSummary();
   else renderMonth(state.activeTab);
 }
+
+document.getElementById("paste-input").addEventListener("input", renderParsePreview);
 
 render();
 </script>
