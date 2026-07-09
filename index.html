@@ -164,6 +164,8 @@
   tfoot td { font-weight: 700; border-top: 2px solid var(--text); border-bottom: none; }
 
   .days-input { width: 74px !important; text-align: center; font-weight: 600; }
+  .paid-check { width: 20px; height: 20px; accent-color: var(--green); cursor: pointer; vertical-align: middle; }
+  .paid-check:disabled { cursor: default; }
   .btn-mini {
     border: 1.5px solid var(--border); background: var(--surface2); color: var(--muted);
     border-radius: 8px; padding: 5px 9px; font-size: .75rem; font-weight: 600; cursor: pointer;
@@ -317,6 +319,7 @@ function defaultPeriod(ym) {
     elec: 0,
     water: 0,
     days: Array(NUM_PEOPLE).fill(null), // null = ở đủ đợt
+    paid: Array(NUM_PEOPLE).fill(false), // đánh dấu đã đóng tiền
     names: defaultNames(ym)
   };
 }
@@ -358,6 +361,9 @@ function normalize(s) {
         for (let i = 0; i < NUM_PEOPLE; i++) {
           dp.days[i] = (p.days[i] === null || p.days[i] === undefined || p.days[i] === "") ? null : Number(p.days[i]);
         }
+      }
+      if (Array.isArray(p.paid)) {
+        for (let i = 0; i < NUM_PEOPLE; i++) dp.paid[i] = !!p.paid[i];
       }
       if (p.meta) dp.meta = p.meta;
     }
@@ -863,9 +869,8 @@ function renderMonth(ym) {
             <tr>
               <th>Thành viên</th>
               <th>Số ngày ở</th>
-              <th>⚡ Điện</th>
-              <th>💧 Nước</th>
               <th>Tổng trả</th>
+              <th style="text-align:center">✔ Đã đóng</th>
             </tr>
           </thead>
           <tbody id="people-body"></tbody>
@@ -873,9 +878,8 @@ function renderMonth(ym) {
             <tr>
               <td>Tổng</td>
               <td style="text-align:right">${sumDays} ngày</td>
-              <td>${fmtMoney(elecSplit.reduce((a,b)=>a+b,0))}</td>
-              <td>${fmtMoney(waterSplit.reduce((a,b)=>a+b,0))}</td>
               <td class="total-val">${fmtMoney(elecSplit.reduce((a,b)=>a+b,0) + waterSplit.reduce((a,b)=>a+b,0))}</td>
+              <td style="text-align:center">${p.paid.filter(Boolean).length}/${NUM_PEOPLE}</td>
             </tr>
           </tfoot>
         </table>
@@ -884,7 +888,7 @@ function renderMonth(ym) {
         ${ADMIN
           ? `💡 Nhập số ngày mỗi người thực ở trong đợt (mặc định ở đủ ${nDays} ngày — bấm <b>Đủ</b> để đặt lại).
              Tiền được chia theo tỷ lệ: <b>tiền người A = tổng tiền × ngày A ÷ tổng ngày cả phòng</b>, làm tròn sao cho cộng lại khớp đúng tổng.
-             Đổi tên thành viên sẽ áp dụng từ tháng này trở đi.`
+             Đổi tên thành viên sẽ áp dụng từ tháng này trở đi. Tích ô <b>✔ Đã đóng</b> khi ai đã chuyển tiền để theo dõi.`
           : `👁 Bạn đang ở chế độ xem — chỉ người quản lý sửa được số liệu. Bấm <b>📱 QR</b> cạnh số tiền của mình để quét mã chuyển khoản.`}
       </p>
     </div>
@@ -931,9 +935,8 @@ function renderMonth(ym) {
                value="${daysArr[i]}" ${isFull ? 'style="color:var(--muted)"' : ""} ${dis}>
         ${ADMIN ? `<button class="btn-mini" data-full="${i}" title="Ở đủ cả đợt">Đủ</button>` : ""}
       </td>
-      <td><span class="money-val">${fmtMoney(elecSplit[i])}</span></td>
-      <td><span class="money-val">${fmtMoney(waterSplit[i])}</span></td>
       <td><span class="total-val">${fmtMoney(elecSplit[i] + waterSplit[i])}</span>${bankReady && (elecSplit[i] + waterSplit[i]) > 0 ? ` <button class="btn-mini" data-qr="${i}" title="Hiện mã QR chuyển khoản">📱 QR</button>` : ""}</td>
+      <td style="text-align:center"><input type="checkbox" class="paid-check" data-paid="${i}" ${p.paid[i] ? "checked" : ""} ${dis}></td>
     `;
     tbody.appendChild(tr);
   }
@@ -991,6 +994,9 @@ function renderMonth(ym) {
   });
   tbody.querySelectorAll("[data-full]").forEach(btn => {
     btn.onclick = () => { p.days[+btn.dataset.full] = null; saveState(); render(); };
+  });
+  tbody.querySelectorAll(".paid-check").forEach(inp => {
+    inp.onchange = () => { p.paid[+inp.dataset.paid] = inp.checked; saveState(); render(); };
   });
   document.getElementById("bank-bin").onchange = e => { state.bank.bin = e.target.value; saveState(); render(); };
   document.getElementById("bank-acc").addEventListener("change", e => { state.bank.acc = e.target.value.trim(); saveState(); render(); });
