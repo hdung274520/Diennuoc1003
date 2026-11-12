@@ -679,7 +679,8 @@ async function syncPull(first = false) {
     if (!res.ok) throw new Error("HTTP " + res.status);
     const remote = await res.json();
     const remoteAt = remote ? Number(remote.updatedAt) || 0 : 0;
-    if (remoteAt > (state.updatedAt || 0)) {
+    // bằng nhau lúc mở trang vẫn lấy bản mây: bản trong máy có thể đã bị bản web cũ đọc sai
+    if (remoteAt > (state.updatedAt || 0) || (first && remote && remoteAt === (state.updatedAt || 0))) {
       const el = document.activeElement;
       if (!first && el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) {
         setSyncStatus("ok"); // người dùng đang gõ — áp dụng ở lượt kiểm tra sau
