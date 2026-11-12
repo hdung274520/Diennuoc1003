@@ -346,6 +346,8 @@ function isAdmin() {
   return localStorage.getItem(ADMIN_KEY) === state.adminPin;
 }
 // Chuẩn hóa dữ liệu bất kỳ (localStorage / đám mây / file nhập) về cấu trúc chuẩn
+// Firebase bỏ phần tử null trong mảng và có thể trả về object thay vì mảng
+const toArr = v => Array.isArray(v) ? v : (v && typeof v === "object" ? Object.assign([], v) : null);
 function normalize(s) {
   const out = defaultState();
   if (!s || typeof s !== "object") return out;
@@ -357,19 +359,20 @@ function normalize(s) {
       if (p.end) dp.end = p.end;
       dp.elec = Number(p.elec) || 0;
       dp.water = Number(p.water) || 0;
-      if (Array.isArray(p.days)) {
+      const days = toArr(p.days), paid = toArr(p.paid);
+      if (days) {
         for (let i = 0; i < NUM_PEOPLE; i++) {
-          dp.days[i] = (p.days[i] === null || p.days[i] === undefined || p.days[i] === "") ? null : Number(p.days[i]);
+          dp.days[i] = (days[i] === null || p.days[i] === undefined || p.days[i] === "") ? null : Number(p.days[i]);
         }
       }
-      if (Array.isArray(p.paid)) {
-        for (let i = 0; i < NUM_PEOPLE; i++) dp.paid[i] = !!p.paid[i];
+      if (paid) {
+        for (let i = 0; i < NUM_PEOPLE; i++) dp.paid[i] = !!paid[i];
       }
       if (p.meta) dp.meta = p.meta;
     }
     // Tên: ưu tiên tên theo tháng (định dạng mới), rồi tên chung (định dạng cũ);
     // tên mặc định kiểu "Người N" bị bỏ qua để nhường chỗ cho tên thật của phòng
-    const src = (p && Array.isArray(p.names)) ? p.names : (Array.isArray(s.names) ? s.names : null);
+    const src = (p && toArr(p.names)) || toArr(s.names);
     if (src) {
       for (let i = 0; i < NUM_PEOPLE; i++) {
         const n = src[i];
@@ -592,12 +595,8 @@ function renderParsePreview() {
 }
 
 // ====== Đồng bộ qua Firebase Realtime Database ======
-const SYNC_KEY = "ktx-sync-config";
-const DEFAULT_DB_URL = "https://diennuoc1003-default-rtdb.asia-southeast1.firebasedatabase.app";
-let syncCfg = null;
-try { syncCfg = JSON.parse(localStorage.getItem(SYNC_KEY)); } catch (e) {}
-let syncStatus = syncCfg ? "connecting" : "off"; // off | connecting | ok | saving | error
-let syncPanelOpen = false;
+const syncCfg = { dbUrl: "https://diennuoc1003-default-rtdb.asia-southeast1.firebasedatabase.app", room: "1003" };
+let syncStatus = "connecting"; // connecting | ok | saving | error
 let pushTimer = null;
 
 function syncEndpoint() {
@@ -606,7 +605,6 @@ function syncEndpoint() {
 function setSyncStatus(st) { syncStatus = st; renderSyncCard(); }
 
 async function syncPush() {
-  if (!syncCfg) return;
   setSyncStatus("saving");
   try {
     const res = await fetch(syncEndpoint(), { method: "PUT", body: JSON.stringify(state) });
@@ -615,12 +613,10 @@ async function syncPush() {
   } catch (e) { setSyncStatus("error"); }
 }
 function scheduleSyncPush() {
-  if (!syncCfg) return;
   clearTimeout(pushTimer);
   pushTimer = setTimeout(syncPush, 800); // gộp nhiều thay đổi liên tiếp thành 1 lần đẩy
 }
 async function syncPull(first = false) {
-  if (!syncCfg) return;
   try {
     const res = await fetch(syncEndpoint());
     if (!res.ok) throw new Error("HTTP " + res.status);
@@ -647,44 +643,12 @@ async function syncPull(first = false) {
 }
 setInterval(() => syncPull(false), 10000);
 
-function shareLink() {
-  const base = location.protocol === "file:"
-    ? "https://hdung274520.github.io/Diennuoc1003/"
-    : location.origin + location.pathname;
-  // Database mặc định đã gắn sẵn trong web → link chỉ cần tên phòng
-  if (syncCfg.dbUrl === DEFAULT_DB_URL) {
-    return base + "#room=" + encodeURIComponent(syncCfg.room);
-  }
-  return base + "#sync=" + btoa(encodeURIComponent(JSON.stringify(syncCfg)));
-}
-// Mở link mời (#room=... hoặc #sync=... kiểu cũ) → tự nhận cấu hình đồng bộ
-(function importFromHash() {
-  let cfg = null;
-  const room = location.hash.match(/#room=(.+)/);
-  const legacy = location.hash.match(/#sync=(.+)/);
-  if (room) {
-    cfg = { dbUrl: DEFAULT_DB_URL, room: decodeURIComponent(room[1]) };
-  } else if (legacy) {
-    try {
-      const c = JSON.parse(decodeURIComponent(atob(legacy[1])));
-      if (c && c.dbUrl && c.room) cfg = { dbUrl: String(c.dbUrl), room: String(c.room) };
-    } catch (e) {}
-  } else return;
-  if (cfg) {
-    syncCfg = cfg;
-    localStorage.setItem(SYNC_KEY, JSON.stringify(syncCfg));
-    syncStatus = "connecting";
-  }
-  history.replaceState(null, "", location.pathname + location.search);
-})();
-
 function renderSyncCard() {
   const el = document.getElementById("sync-card");
   const dotCls = syncStatus === "ok" ? "ok" : syncStatus === "saving" ? "saving" : syncStatus === "error" ? "error" : "";
-  const statusText = !syncCfg ? "Chưa bật đồng bộ — dữ liệu chỉ lưu trên máy này"
-    : syncStatus === "ok" ? `Đã đồng bộ · phòng “${escapeHtml(syncCfg.room)}”`
+  const statusText = syncStatus === "ok" ? "Đã đồng bộ · phòng 1003"
     : syncStatus === "saving" ? "Đang lưu lên đám mây…"
-    : syncStatus === "error" ? "⚠ Lỗi kết nối — kiểm tra mạng hoặc URL Firebase"
+    : syncStatus === "error" ? "⚠ Lỗi kết nối — kiểm tra mạng"
     : "Đang kết nối…";
   const lockBtn = !state.adminPin
     ? '<button class="btn-mini" id="lock-setup" title="Đặt mã để chỉ mình bạn sửa được số liệu">🔑 Đặt mã quản lý</button>'
@@ -696,30 +660,7 @@ function renderSyncCard() {
       <span class="sync-dot ${dotCls}"></span>
       <span class="sync-text">☁️ ${statusText}</span>
       ${lockBtn}
-      <button class="btn-mini" id="sync-toggle">${syncPanelOpen ? "Đóng" : (syncCfg ? "Cài đặt" : "Bật đồng bộ")}</button>
     </div>
-    ${syncPanelOpen ? `
-    <div class="sync-settings">
-      <div class="grid cols-2">
-        <div>
-          <label class="field-label">URL Firebase Realtime Database</label>
-          <input class="name-input" id="sync-db" placeholder="https://ten-du-an-default-rtdb.asia-southeast1.firebasedatabase.app"
-                 value="${escapeHtml(syncCfg ? syncCfg.dbUrl : DEFAULT_DB_URL)}">
-        </div>
-        <div>
-          <label class="field-label">Tên phòng (mã chung cả phòng, tự đặt)</label>
-          <input class="name-input" id="sync-room" placeholder="vd: phong1003" value="${syncCfg ? escapeHtml(syncCfg.room) : ""}">
-        </div>
-      </div>
-      <p style="margin-top:12px">
-        <button class="btn-apply" id="sync-connect">🔗 Kết nối</button>
-        ${syncCfg ? `<button class="btn-mini" id="sync-copy" style="margin-left:8px">📤 Copy link mời cả phòng</button>
-        <button class="btn-mini" id="sync-off" style="margin-left:8px;color:#dc2626">Ngắt đồng bộ</button>` : ""}
-      </p>
-      ${syncCfg ? `<div class="share-link">${escapeHtml(shareLink())}</div>
-      <p class="note">Gửi link trên cho các thành viên — mở link là tự kết nối vào cùng phòng, không cần cài đặt gì.</p>` : ""}
-      <p class="note">Chưa có Firebase? Vào <b>console.firebase.google.com</b> → Add project → trong project chọn <b>Build → Realtime Database → Create database</b> (chọn Singapore, chế độ <b>test mode</b>) → copy URL dạng <i>https://…firebasedatabase.app</i> dán vào ô trên. Cả phòng chỉ cần 1 người làm 1 lần.</p>
-    </div>` : ""}
   `;
 
   const lockSetup = document.getElementById("lock-setup");
@@ -743,36 +684,6 @@ function renderSyncCard() {
     if (confirm("Chuyển máy này về chế độ chỉ xem? (nhập lại mã sẽ sửa được tiếp)")) {
       localStorage.removeItem(ADMIN_KEY);
       render();
-    }
-  };
-
-  document.getElementById("sync-toggle").onclick = () => { syncPanelOpen = !syncPanelOpen; renderSyncCard(); };
-  if (!syncPanelOpen) return;
-
-  document.getElementById("sync-connect").onclick = () => {
-    const dbUrl = document.getElementById("sync-db").value.trim();
-    const room = document.getElementById("sync-room").value.trim();
-    if (!/^https:\/\/.+/.test(dbUrl)) { alert("URL Firebase phải bắt đầu bằng https://"); return; }
-    if (!room) { alert("Hãy đặt tên phòng (cả phòng dùng chung một tên)."); return; }
-    syncCfg = { dbUrl, room };
-    localStorage.setItem(SYNC_KEY, JSON.stringify(syncCfg));
-    setSyncStatus("connecting");
-    syncPull(true);
-  };
-  const copyBtn = document.getElementById("sync-copy");
-  if (copyBtn) copyBtn.onclick = () => {
-    navigator.clipboard.writeText(shareLink()).then(() => {
-      copyBtn.textContent = "✓ Đã copy!";
-      setTimeout(renderSyncCard, 1500);
-    });
-  };
-  const offBtn = document.getElementById("sync-off");
-  if (offBtn) offBtn.onclick = () => {
-    if (confirm("Ngắt đồng bộ trên máy này? Dữ liệu trên đám mây và các máy khác vẫn còn.")) {
-      syncCfg = null;
-      localStorage.removeItem(SYNC_KEY);
-      syncStatus = "off";
-      renderSyncCard();
     }
   };
 }
@@ -1154,7 +1065,7 @@ document.getElementById("theme-toggle").onclick = () => {
 applyTheme();
 
 render();
-if (syncCfg) syncPull(true);
+syncPull(true);
 </script>
 </body>
 </html>
