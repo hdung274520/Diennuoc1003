@@ -128,10 +128,9 @@
 
   .grid { display: grid; gap: 14px; }
   .grid > * { min-width: 0; }
-  input[type="date"] { min-width: 0; font-size: .9rem; padding-inline: 8px; }
-  @media (max-width: 480px) { .grid.cols-2 { grid-template-columns: 1fr; } }
   .grid.cols-2 { grid-template-columns: 1fr 1fr; }
-  .grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+  @media (max-width: 480px) { .grid.cols-2 { grid-template-columns: 1fr; } }
+  .grid.cols-4 { grid-template-columns: repeat(4, 1fr); align-items: end; }
   @media (max-width: 720px) {
     .grid.cols-4 { grid-template-columns: 1fr 1fr; }
   }
@@ -152,6 +151,8 @@
     background: var(--input-bg);
     transition: border-color .15s;
   }
+  /* sau khối trên để không bị ghi đè: chữ nhỏ hơn cho vừa "dd/mm/yyyy" trên điện thoại */
+  input[type="date"] { min-width: 0; font-size: .9rem; padding-inline: 8px; }
   input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
   input.money { text-align: right; font-weight: 600; }
 
@@ -765,6 +766,9 @@ function renderTabs() {
   sum.textContent = "📊 Tổng kết";
   sum.onclick = () => { state.activeTab = "summary"; saveState(false); render(); };
   el.appendChild(sum);
+  // vẽ lại tab làm thanh cuộn về đầu — cuộn tab đang chọn vào giữa
+  const act = el.querySelector(".tab.active");
+  if (act) el.scrollLeft = act.offsetLeft - (el.clientWidth - act.offsetWidth) / 2;
 }
 
 // ====== Render trang tháng ======
@@ -811,12 +815,12 @@ function renderMonth(ym) {
           <input type="date" id="inp-end" value="${p.end}" ${dis}>
         </div>
         <div>
-          <label class="field-label">⚡ Tổng tiền điện (₫)</label>
+          <label class="field-label">⚡ Tiền điện (₫)</label>
           <input class="money" id="inp-elec" inputmode="numeric"
                  value="${p.elec ? p.elec.toLocaleString("vi-VN") : ""}" placeholder="0" ${dis}>
         </div>
         <div>
-          <label class="field-label">💧 Tổng tiền nước (₫)</label>
+          <label class="field-label">💧 Tiền nước (₫)</label>
           <input class="money" id="inp-water" inputmode="numeric"
                  value="${p.water ? p.water.toLocaleString("vi-VN") : ""}" placeholder="0" ${dis}>
         </div>
